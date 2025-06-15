@@ -368,3 +368,151 @@ def generate_stl(board_name):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@board_bp.route('/generate-l-bracket/<board_name>', methods=['POST'])
+def generate_l_bracket(board_name):
+    """Generate STL file for L-brackets for boards without mounting holes"""
+    try:
+        data = request.json
+        board_width = data.get('board_width', 50.0)
+        board_height = data.get('board_height', 30.0)
+        standoff_height = data.get('standoff_height', 10.0)
+        
+        # L-bracket parameters
+        bracket_thickness = 3.0  # 3mm thick brackets
+        bracket_width = 10.0     # 10mm wide brackets
+        hole_diameter = 3.0      # Standard mounting hole diameter
+        hole_offset = 5.0        # Distance from edge to hole center
+        
+        # Create 4 L-brackets (one for each corner)
+        all_vertices = []
+        all_faces = []
+        vertex_offset = 0
+        
+        # Define the 4 corner positions
+        corners = [
+            {'x': 0, 'y': 0, 'name': 'bottom_left'},
+            {'x': board_width, 'y': 0, 'name': 'bottom_right'},
+            {'x': board_width, 'y': board_height, 'name': 'top_right'},
+            {'x': 0, 'y': board_height, 'name': 'top_left'}
+        ]
+        
+        for corner in corners:
+            # Generate L-bracket geometry for this corner
+            bracket_vertices, bracket_faces = generate_l_bracket_geometry(
+                corner['x'], corner['y'], corner['name'],
+                bracket_thickness, bracket_width, standoff_height,
+                hole_diameter, hole_offset
+            )
+            
+            # Adjust face indices to account for previous vertices
+            adjusted_faces = bracket_faces + vertex_offset
+            
+            all_vertices.extend(bracket_vertices)
+            all_faces.extend(adjusted_faces)
+            vertex_offset += len(bracket_vertices)
+        
+        # Convert to numpy arrays
+        vertices = np.array(all_vertices)
+        faces = np.array(all_faces)
+        
+        # Create mesh
+        l_bracket_mesh = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
+        for i, face in enumerate(faces):
+            for j in range(3):
+                l_bracket_mesh.vectors[i][j] = vertices[face[j], :]
+        
+        # Save to temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.stl')
+        l_bracket_mesh.save(temp_file.name)
+        temp_file.close()
+        
+        return send_file(temp_file.name, as_attachment=True,
+                        download_name=f'{board_name}_l_brackets.stl', mimetype='application/sla')
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def generate_l_bracket_geometry(corner_x, corner_y, corner_name, thickness, width, height, hole_diameter, hole_offset):
+    """Generate geometry for a single L-bracket at a specific corner"""
+    vertices = []
+    faces = []
+    
+    # Define L-bracket shape based on corner position
+    if corner_name == 'bottom_left':
+        # L-bracket extends right and up from corner
+        base_points = [
+            [corner_x - thickness, corner_y - thickness],  # Outer corner
+            [corner_x + width, corner_y - thickness],      # Right edge of horizontal arm
+            [corner_x + width, corner_y],                  # Inner corner of horizontal arm
+            [corner_x, corner_y],                          # Board corner
+            [corner_x, corner_y + width],                  # Inner corner of vertical arm
+            [corner_x - thickness, corner_y + width]       # Top edge of vertical arm
+        ]
+        hole_pos = [corner_x + hole_offset, corner_y + hole_offset]
+        
+    elif corner_name == 'bottom_right':
+        # L-bracket extends left and up from corner
+        base_points = [
+            [corner_x + thickness, corner_y - thickness],  # Outer corner
+            [corner_x - width, corner_y - thickness],      # Left edge of horizontal arm
+            [corner_x - width, corner_y],                  # Inner corner of horizontal arm
+            [corner_x, corner_y],                          # Board corner
+            [corner_x, corner_y + width],                  # Inner corner of vertical arm
+            [corner_x + thickness, corner_y + width]       # Top edge of vertical arm
+        ]
+        hole_pos = [corner_x - hole_offset, corner_y + hole_offset]
+        
+    elif corner_name == 'top_right':
+        # L-bracket extends left and down from corner
+        base_points = [
+            [corner_x + thickness, corner_y + thickness],  # Outer corner
+            [corner_x - width, corner_y + thickness],      # Left edge of horizontal arm
+            [corner_x - width, corner_y],                  # Inner corner of horizontal arm
+            [corner_x, corner_y],                          # Board corner
+            [corner_x, corner_y - width],                  # Inner corner of vertical arm
+            [corner_x + thickness, corner_y - width]       # Bottom edge of vertical arm
+        ]
+        hole_pos = [corner_x - hole_offset, corner_y - hole_offset]
+        
+    else:  # top_left
+        # L-bracket extends right and down from corner
+        base_points = [
+            [corner_x - thickness, corner_y + thickness],  # Outer corner
+            [corner_x + width, corner_y + thickness],      # Right edge of horizontal arm
+            [corner_x + width, corner_y],                  # Inner corner of horizontal arm
+            [corner_x, corner_y],                          # Board corner
+            [corner_x, corner_y - width],                  # Inner corner of vertical arm
+            [corner_x - thickness, corner_y - width]       # Bottom edge of vertical arm
+        ]
+        hole_pos = [corner_x + hole_offset, corner_y - hole_offset]
+    
+    # Create 3D vertices (bottom and top faces)
+    for point in base_points:
+        vertices.append([point[0], point[1], 0])        # Bottom face
+        vertices.append([point[0], point[1], height])   # Top face
+    
+    # Generate faces for the L-bracket
+    num_points = len(base_points)
+    
+    # Bottom face (triangulated)
+    for i in range(1, num_points - 1):
+        faces.append([0, i * 2, (i + 1) * 2])
+    
+    # Top face (triangulated, reversed winding)
+    for i in range(1, num_points - 1):
+        faces.append([1, (i + 1) * 2 + 1, i * 2 + 1])
+    
+    # Side faces
+    for i in range(num_points):
+        next_i = (i + 1) % num_points
+        
+        # Two triangles per side face
+        faces.append([i * 2, next_i * 2, i * 2 + 1])
+        faces.append([next_i * 2, next_i * 2 + 1, i * 2 + 1])
+    
+    # Create hole by subtracting a cylinder (simplified approach)
+    # For now, we'll create the bracket without the hole and let the user drill it
+    # In a more advanced implementation, we could subtract a cylindrical mesh
+    
+    return vertices, faces
+

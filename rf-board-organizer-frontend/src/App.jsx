@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+
 import { Plus, Download, RotateCw, Trash2, Move, Upload, FileText, Copy, Camera, AlertCircle } from 'lucide-react';
 import './App.css';
 
@@ -55,9 +56,10 @@ function App() {
   const [imagePrompt, setImagePrompt] = useState('');
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [imageError, setImageError] = useState('');
+  const [pasteSuccess, setPasteSuccess] = useState(false);
+  const [imageName, setImageName] = useState('');
   const svgRef = useRef(null);
   const fileInputRef = useRef(null);
-  const dropZoneRef = useRef(null);
   
   // Form state for new board
   const [newBoard, setNewBoard] = useState({
@@ -288,38 +290,84 @@ function App() {
   // Handle image file selection
   const handleImageUpload = (event) => {
     const file = event.target.files[0];
-    processImageFile(file);
-  };
-
-  // Process image file from various sources (file input or paste)
-  const processImageFile = (file) => {
     if (file && file.type.startsWith('image/')) {
       setImageFile(file);
+      setImageName(file.name);
       setImageError('');
+      setPasteSuccess(false); // Reset paste success state
     } else {
       setImageError('Please select a valid image file (PNG, JPG, etc.)');
       setImageFile(null);
+      setImageName('');
     }
   };
 
-  // Handle paste event for images from clipboard
-  const handlePaste = (event) => {
-    const items = (event.clipboardData || event.originalEvent.clipboardData).items;
+  // Handle image file pasted from clipboard
+  const handlePaste = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     
-    for (const item of items) {
-      if (item.type.indexOf('image') !== -1) {
-        const blob = item.getAsFile();
-        processImageFile(blob);
-        break;
+    if (!e.clipboardData) {
+      setImageError('Clipboard access not available');
+      return;
+    }
+    
+    // Check for items (Chrome, Firefox)
+    if (e.clipboardData.items) {
+      const items = e.clipboardData.items;
+      
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          const blob = items[i].getAsFile();
+          if (blob) {
+            // Create a timestamp-based filename for the pasted image
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `pasted-image-${timestamp}.png`;
+            const file = new File([blob], filename, { type: blob.type });
+            
+            setImageFile(file);
+            setImageName(filename);
+            setImageError('');
+            setPasteSuccess(true);
+            
+            // Reset the success message after 3 seconds
+            setTimeout(() => {
+              setPasteSuccess(false);
+            }, 3000);
+            
+            console.log('Image pasted from clipboard');
+            return;
+          }
+        }
+      }
+    }
+    
+    // Check for files as fallback
+    if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+      const file = e.clipboardData.files[0];
+      if (file && file.type.startsWith('image/')) {
+        setImageFile(file);
+        setImageName(file.name || 'pasted-image.png');
+        setImageError('');
+        setPasteSuccess(true);
+            
+        // Reset the success message after 3 seconds
+        setTimeout(() => {
+          setPasteSuccess(false);
+        }, 3000);
+            
+        console.log('Image pasted from clipboard (files)');
+        return;
       }
     }
   };
-
+  
   // Set up paste event listener
   useEffect(() => {
-    document.addEventListener('paste', handlePaste);
+    window.addEventListener('paste', handlePaste);
+    
     return () => {
-      document.removeEventListener('paste', handlePaste);
+      window.removeEventListener('paste', handlePaste);
     };
   }, []);
 
@@ -886,17 +934,42 @@ endfacet
                     <CardContent className="space-y-3">
                       <div className="space-y-4">
                         <div className="grid w-full items-center gap-1.5">
-                          <Label htmlFor="image-upload">Upload Board Image</Label>
+                          <Label htmlFor="image-upload">Upload Dimensional Drawing</Label>
                           <div 
-                            ref={dropZoneRef}
-                            className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-accent/50 transition-colors"
+                            className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-accent/50 transition-colors border-muted-foreground/25"
                             onClick={() => fileInputRef.current?.click()}
+                            tabIndex="0"
+                            onFocus={() => console.log('Upload area focused')}
                             onPaste={handlePaste}
                           >
-                            <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-                            <p className="text-sm text-muted-foreground">
-                              Drag & drop an image here, click to browse, or paste from clipboard
-                            </p>
+                            {imageFile && pasteSuccess ? (
+                              <div className="flex flex-col items-center justify-center animate-pulse">
+                                <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center mb-2">
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                                <p className="text-sm font-medium text-green-600">Image pasted successfully!</p>
+                                <p className="text-xs text-muted-foreground mt-1">{imageName}</p>
+                              </div>
+                            ) : imageFile ? (
+                              <div className="flex flex-col items-center justify-center">
+                                <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center mb-2">
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3l14 9-14 9V3z" />
+                                  </svg>
+                                </div>
+                                <p className="text-sm font-medium text-blue-600">Image ready</p>
+                                <p className="text-xs text-muted-foreground mt-1">{imageName}</p>
+                              </div>
+                            ) : (
+                              <>
+                                <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                                <p className="text-sm text-muted-foreground">
+                                  <strong>Click to browse</strong> or <strong>paste</strong> image from clipboard (Ctrl+V/⌘+V)
+                                </p>
+                              </>
+                            )}
                             <Input 
                               id="image-upload" 
                               type="file" 

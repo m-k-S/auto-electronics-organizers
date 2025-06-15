@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Download, RotateCw, Trash2, Move, Upload, FileText } from 'lucide-react';
+import { Plus, Download, RotateCw, Trash2, Move, Upload, FileText, Copy, Camera, AlertCircle } from 'lucide-react';
 import './App.css';
 
 function App() {
@@ -22,7 +22,7 @@ function App() {
       hole_spacing_x: 40,
       hole_spacing_y: 20,
       hole_diameter: 3,
-      standoff_height: 10,
+      standoff_height: 3,
       position_x: 20,
       position_y: 20,
       rotation: 0
@@ -51,7 +51,13 @@ function App() {
   const [draggedBoard, setDraggedBoard] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [jsonInput, setJsonInput] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePrompt, setImagePrompt] = useState('');
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
+  const [imageError, setImageError] = useState('');
   const svgRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const dropZoneRef = useRef(null);
   
   // Form state for new board
   const [newBoard, setNewBoard] = useState({
@@ -63,7 +69,7 @@ function App() {
     hole_spacing_x: 40,
     hole_spacing_y: 20,
     hole_diameter: 3,
-    standoff_height: 10
+    standoff_height: 3
   });
 
   // Calculate actual board dimensions considering rotation
@@ -180,7 +186,7 @@ function App() {
             hole_spacing_x: component.mounting_hole_dx || 40,
             hole_spacing_y: component.mounting_hole_dy || 20,
             hole_diameter: component.mounting_hole_diameter || 3,
-            standoff_height: 10, // Default standoff height
+            standoff_height: 3, // Default standoff height
             position_x: 10 + (index % 5) * 60, // Arrange in grid
             position_y: 10 + Math.floor(index / 5) * 60,
             rotation: 0
@@ -224,8 +230,28 @@ function App() {
       hole_spacing_x: 40,
       hole_spacing_y: 20,
       hole_diameter: 3,
-      standoff_height: 10
+      standoff_height: 3
     });
+  };
+
+  // Duplicate board
+  const duplicateBoard = (boardId) => {
+    const originalBoard = boards.find(board => board.id === boardId);
+    if (!originalBoard) return;
+    
+    const newId = Math.max(...boards.map(b => b.id), 0) + 1;
+    const duplicatedBoard = {
+      ...originalBoard,
+      id: newId,
+      name: `${originalBoard.name} (Copy)`,
+      position_x: originalBoard.position_x + 20, // Offset position slightly
+      position_y: originalBoard.position_y + 20
+    };
+    
+    setBoards([...boards, duplicatedBoard]);
+    
+    // Auto-select the duplicated board
+    setSelectedBoards([...selectedBoards, newId]);
   };
 
   // Delete board
@@ -257,6 +283,103 @@ function App() {
       }
       return board;
     }));
+  };
+
+  // Handle image file selection
+  const handleImageUpload = (event) => {
+    const file = event.target.files[0];
+    processImageFile(file);
+  };
+
+  // Process image file from various sources (file input or paste)
+  const processImageFile = (file) => {
+    if (file && file.type.startsWith('image/')) {
+      setImageFile(file);
+      setImageError('');
+    } else {
+      setImageError('Please select a valid image file (PNG, JPG, etc.)');
+      setImageFile(null);
+    }
+  };
+
+  // Handle paste event for images from clipboard
+  const handlePaste = (event) => {
+    const items = (event.clipboardData || event.originalEvent.clipboardData).items;
+    
+    for (const item of items) {
+      if (item.type.indexOf('image') !== -1) {
+        const blob = item.getAsFile();
+        processImageFile(blob);
+        break;
+      }
+    }
+  };
+
+  // Set up paste event listener
+  useEffect(() => {
+    document.addEventListener('paste', handlePaste);
+    return () => {
+      document.removeEventListener('paste', handlePaste);
+    };
+  }, []);
+
+  // Process image with Gemini API
+  const processImageWithGemini = async () => {
+    if (!imageFile || !imagePrompt.trim()) {
+      setImageError('Please select an image and provide a description.');
+      return;
+    }
+
+    setIsProcessingImage(true);
+    setImageError('');
+
+    try {
+      const formData = new FormData();
+      formData.append('image', imageFile);
+      formData.append('prompt', imagePrompt);
+
+      const response = await fetch('http://localhost:5004/api/extract-dimensions', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (result.success && result.dimensions) {
+        // Populate the form with extracted dimensions
+        setNewBoard({
+          name: result.dimensions.name || 'Extracted Board',
+          width: result.dimensions.width || 50,
+          height: result.dimensions.height || 30,
+          mounting_holes_x: result.dimensions.mounting_holes_x || 2,
+          mounting_holes_y: result.dimensions.mounting_holes_y || 2,
+          hole_spacing_x: result.dimensions.hole_spacing_x || 40,
+          hole_spacing_y: result.dimensions.hole_spacing_y || 20,
+          hole_diameter: result.dimensions.hole_diameter || 3,
+          standoff_height: result.dimensions.standoff_height || 10
+        });
+
+        // Clear the image upload
+        setImageFile(null);
+        setImagePrompt('');
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+
+        alert('Dimensions extracted successfully! Please review and adjust if needed.');
+      } else {
+        throw new Error(result.error || 'Failed to extract dimensions from image');
+      }
+    } catch (error) {
+      console.error('Error processing image:', error);
+      setImageError(`Error: ${error.message}`);
+    } finally {
+      setIsProcessingImage(false);
+    }
   };
 
   // Handle mouse down on board for dragging
@@ -502,7 +625,7 @@ EOF`;
 
   // Download STL file for standoff - proper cylindrical standoff
   const downloadSTL = (board) => {
-    const height = board.standoff_height || 10;
+    const height = board.standoff_height || 3;
     const innerRadius = board.hole_diameter / 2;
     const outerRadius = innerRadius * 1.5; // 1.5x bigger outer diameter
     
@@ -752,6 +875,80 @@ endfacet
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {/* Image Upload Section */}
+                  <Card className="bg-blue-50 border-blue-200">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Camera className="h-4 w-4" />
+                        Extract Dimensions from Image (AI-Powered)
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="space-y-4">
+                        <div className="grid w-full items-center gap-1.5">
+                          <Label htmlFor="image-upload">Upload Board Image</Label>
+                          <div 
+                            ref={dropZoneRef}
+                            className="border-2 border-dashed rounded-lg p-6 text-center cursor-pointer hover:bg-accent/50 transition-colors"
+                            onClick={() => fileInputRef.current?.click()}
+                            onPaste={handlePaste}
+                          >
+                            <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                            <p className="text-sm text-muted-foreground">
+                              Drag & drop an image here, click to browse, or paste from clipboard
+                            </p>
+                            <Input 
+                              id="image-upload" 
+                              type="file" 
+                              accept="image/*"
+                              onChange={handleImageUpload}
+                              ref={fileInputRef}
+                              className="hidden"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <Label htmlFor="image-prompt">Description/Prompt</Label>
+                        <Textarea
+                          id="image-prompt"
+                          value={imagePrompt}
+                          onChange={(e) => setImagePrompt(e.target.value)}
+                          placeholder="Describe what to extract: 'Extract board dimensions, mounting hole spacing, and hole diameter from this technical drawing'"
+                          className="mt-1 h-20"
+                        />
+                      </div>
+                      
+                      {imageError && (
+                        <div className="flex items-center gap-2 text-red-600 text-sm">
+                          <AlertCircle className="h-4 w-4" />
+                          {imageError}
+                        </div>
+                      )}
+                      
+                      <Button 
+                        onClick={processImageWithGemini}
+                        disabled={!imageFile || !imagePrompt.trim() || isProcessingImage}
+                        className="w-full"
+                      >
+                        {isProcessingImage ? (
+                          <>Processing Image...</>
+                        ) : (
+                          <>
+                            <Camera className="h-4 w-4 mr-2" />
+                            Extract Dimensions with AI
+                          </>
+                        )}
+                      </Button>
+                      
+                      <div className="text-xs text-gray-600">
+                        Upload a PNG/JPG of a dimensional drawing and AI will extract the board dimensions, mounting hole spacing, and hole diameter.
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Manual Input Form */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label htmlFor="name">Board Name</Label>
@@ -890,6 +1087,14 @@ endfacet
                           </div>
                         </div>
                         <div className="flex space-x-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => duplicateBoard(board.id)}
+                            title="Duplicate Board"
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
                           <Button
                             size="sm"
                             variant="outline"

@@ -11,7 +11,7 @@ class Board(db.Model):
     hole_spacing_x = db.Column(db.Float, nullable=False)  # spacing in mm
     hole_spacing_y = db.Column(db.Float, nullable=False)  # spacing in mm
     hole_diameter = db.Column(db.Float, nullable=False)  # hole diameter in mm
-    standoff_height = db.Column(db.Float, nullable=False, default=10.0)  # standoff height in mm
+    standoff_height = db.Column(db.Float, nullable=False, default=3.0)  # standoff height in mm
     
     # Position and rotation for layout
     position_x = db.Column(db.Float, default=0.0)
